@@ -3,10 +3,10 @@ use gstreamer::prelude::*;
 use structopt::StructOpt;
 use url::Url;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-fn gst_main<P: AsRef<Path>>(a: P) -> Result<()> {
+fn gst_main(a: Url) -> Result<()> {
     gstreamer::init()?;
     let main = glib::MainLoop::new(None, false);
     let dispatcher = gstreamer_player::PlayerGMainContextSignalDispatcher::new(None);
@@ -14,11 +14,7 @@ fn gst_main<P: AsRef<Path>>(a: P) -> Result<()> {
         None,
         Some(&dispatcher.upcast::<gstreamer_player::PlayerSignalDispatcher>()),
     );
-    player.set_uri(
-        Url::from_file_path(a)
-            .map_err(|_| anyhow!("Failed to convert path A to URI"))?
-            .as_str(),
-    );
+    player.set_uri(a.as_str());
     let error = Arc::new(Mutex::new(Ok(())));
 
     let main_clone = main.clone();
@@ -56,5 +52,5 @@ struct Opt {
 
 fn main() -> Result<()> {
     let opt = Opt::from_args();
-    gst_main(opt.a)
+    gst_main(Url::from_file_path(opt.a).map_err(|_| anyhow!("Failed to convert path A to URI"))?)
 }
