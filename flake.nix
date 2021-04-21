@@ -18,26 +18,36 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         fenixPkgs = fenix.packages.${system};
+        fenixComplete = fenixPkgs.complete.withComponents [
+          "cargo"
+          "clippy-preview"
+          "rust-src"
+          "rust-std"
+          "rustc"
+          "rustfmt-preview"
+        ];
         naerskBuild = (naersk.lib.${system}.override {
-          inherit (fenixPkgs.minimal) cargo rustc;
+          cargo = fenixComplete;
+          rustc = fenixComplete;
         }).buildPackage;
       in
       {
         defaultPackage = naerskBuild {
           src = ./.;
-          buildInputs = with pkgs; [ gst_all_1.gstreamer ];
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ];
+          buildInputs = with pkgs; [
+            gst_all_1.gstreamer
+            gst_all_1.gst-plugins-base
+            gst_all_1.gst-plugins-bad
+            gst_all_1.gst-plugins-good
+            glib
+          ];
         };
 
         devShell = self.defaultPackage.${system}.overrideAttrs (oldAttrs: {
           buildInputs = with pkgs; (oldAttrs.buildInputs or [ ]) ++ [
-            (fenixPkgs.complete.withComponents [
-              "cargo"
-              "clippy-preview"
-              "rust-src"
-              "rust-std"
-              "rustc"
-              "rustfmt-preview"
-            ])
             fenixPkgs.rust-analyzer
             cargo-edit
             nixpkgs-fmt

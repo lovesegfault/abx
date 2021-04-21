@@ -14,3 +14,9 @@ readme = "./README.md"
 repository = "https://github.com/lovesegfault/abx"
 
 [dependencies]
+anyhow = "1.0.40"
+glib = "0.10.3"
+gstreamer = "0.16.7"
+gstreamer-player = "0.16.5"
+structopt = "0.3.21"
+url = "2.2.1"
