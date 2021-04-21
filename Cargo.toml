@@ -1,0 +1,16 @@
+[package]
+name = "abx"
+version = "0.1.0"
+authors = ["Bernardo Meurer <bernardo@meurer.org>"]
+edition = "2018"
+
+categories = [ "command-line-utilities", "multimedia", "multimedia::audio" ]
+description = "Audio ABX Comparasion Utility"
+documentation = "https://docs.rs/abx"
+homepage = "https://github.com/lovesegfault/abx"
+keywords = [ "audio", "comparasion", "abx", "ab", "test" ]
+license = "BSD-3-Clause"
+readme = "./README.md"
+repository = "https://github.com/lovesegfault/abx"
+
+[dependencies]
