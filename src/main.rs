@@ -4,7 +4,7 @@ use gstreamer_player::{PlayerGMainContextSignalDispatcher, PlayerSignalDispatche
 use structopt::StructOpt;
 use url::Url;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 struct Player {
@@ -48,10 +48,6 @@ impl Player {
 
     pub fn play(&self) {
         self.player.play();
-    }
-
-    pub fn stop(&self) {
-        self.player.stop();
     }
 
     pub fn as_error(&self) -> Result<(), glib::Error> {
