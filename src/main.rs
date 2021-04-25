@@ -1,9 +1,143 @@
-use anyhow::{Context, Error};
-use gstreamer::prelude::*;
+use anyhow::{anyhow, Context, Error};
+use gstreamer::{prelude::*, ClockTime, Element, Pad, Pipeline};
 use structopt::StructOpt;
 
-use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
+use std::path::{Path, PathBuf};
+
+#[derive(Clone)]
+struct AudioPipeline {
+    pipeline: Pipeline,
+}
+
+impl AudioPipeline {
+    pub fn new(name: Option<&str>) -> Self {
+        let pipeline = gstreamer::Pipeline::new(name);
+        Self { pipeline }
+    }
+
+    pub fn play(&self) -> Result<(), Error> {
+        self.pipeline
+            .set_state(gstreamer::State::Playing)
+            .with_context(|| "failed to play AudioPipeline")
+            .map(|_| ())
+    }
+
+    pub fn pause(&self) -> Result<(), Error> {
+        self.pipeline
+            .set_state(gstreamer::State::Paused)
+            .with_context(|| "failed to pause AudioPipeline")
+            .map(|_| ())
+    }
+
+    pub fn run(self) -> Result<(), Error> {
+        self.play()?;
+        let bus = self
+            .pipeline
+            .get_bus()
+            .expect("failed to get bus from AudioPipeline");
+        while let Some(msg) = bus.timed_pop(gstreamer::ClockTime::none()) {
+            use gstreamer::MessageView::*;
+            match msg.view() {
+                Eos(_) => {
+                    self.pause()?;
+                    break;
+                }
+                Error(e) => {
+                    self.pause()?;
+                    eprintln!("{:?}", e);
+                    break;
+                }
+                _ => continue,
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct AudioDecoder {
+    src: Element,
+    dec: Element,
+}
+
+impl AudioDecoder {
+    pub fn new<P: AsRef<Path>>(pipeline: &AudioPipeline, file: P) -> Result<Self, Error> {
+        let src = gstreamer::ElementFactory::make("filesrc", None).with_context(|| "")?;
+        src.set_property("location", &file.as_ref().to_str())
+            .with_context(|| format!("failed to set location to {:?}", file.as_ref()))?;
+        let dec = gstreamer::ElementFactory::make("decodebin", None)?;
+
+        pipeline
+            .pipeline
+            .add(&src)
+            .with_context(|| "Failed to create ")?;
+        pipeline.pipeline.add(&dec)?;
+        src.link(&dec)?;
+
+        Ok(Self { src, dec })
+    }
+
+    pub fn src_path(&self) -> String {
+        self.src
+            .get_property("location")
+            .expect("AudioDecoder src did not have location property")
+            .get()
+            .map(|o| o.expect("location not set for AudioDecoder"))
+            .expect("failed to get location from AudioDecoder")
+    }
+
+    pub fn link_with(self, other: &Pad) {
+        let other = other.clone();
+        let path = self.src_path();
+        self.dec.connect_pad_added(move |_, pad| {
+            pad.link(&other).unwrap_or_else(|_| {
+                panic!("failed to link decoder for {}", path);
+            });
+        });
+    }
+}
+
+struct AudioMixer {
+    mixer: Element,
+}
+
+impl AudioMixer {
+    pub fn new(pipeline: &AudioPipeline) -> Result<Self, Error> {
+        let mixer = gstreamer::ElementFactory::make("audiomixer", None)?;
+        let sink = gstreamer::ElementFactory::make("autoaudiosink", None)?;
+
+        pipeline
+            .pipeline
+            .add(&mixer)
+            .with_context(|| "failed to add mixer to pipeline")?;
+        pipeline
+            .pipeline
+            .add(&sink)
+            .with_context(|| "failed to add sink to pipeline")?;
+
+        mixer.link(&sink)?;
+        Ok(Self { mixer })
+    }
+
+    fn get_pad(&self) -> Result<Pad, Error> {
+        self.mixer
+            .request_pad(
+                &self
+                    .mixer
+                    .get_pad_template("sink_%u")
+                    .expect("failed to get mixer pad template sink_%u"),
+                None,
+                None,
+            )
+            .ok_or_else(|| anyhow!("failed to request mixer template"))
+    }
+
+    pub fn link_decoder(&self, dec: AudioDecoder) -> Result<Pad, Error> {
+        let pad = self.get_pad()?;
+        dec.link_with(&pad);
+        Ok(pad)
+    }
+}
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "abx", about = "CLI utility to ABX audio files.")]
@@ -12,96 +146,28 @@ struct Opt {
     b: PathBuf,
 }
 
-struct AudioStreamSelector {
-    selection: AtomicUsize,
-}
-
 fn main() -> Result<(), Error> {
     let opt = Opt::from_args();
 
     gstreamer::init()?;
+    let pipeline = AudioPipeline::new(Some("abx"));
 
-    let pipeline = gstreamer::Pipeline::new(Some("abx"));
+    let a = AudioDecoder::new(&pipeline, opt.a)?;
+    let b = AudioDecoder::new(&pipeline, opt.b)?;
 
-    let a_src = gstreamer::ElementFactory::make("filesrc", None)?;
-    a_src.set_property("location", &opt.a.as_os_str().to_str())?;
-    let b_src = gstreamer::ElementFactory::make("filesrc", None)?;
-    b_src.set_property("location", &opt.b.as_os_str().to_str())?;
+    let mixer = AudioMixer::new(&pipeline)?;
 
-    let a_decoder = gstreamer::ElementFactory::make("decodebin", None)?;
-    let b_decoder = gstreamer::ElementFactory::make("decodebin", None)?;
+    let a_pad = mixer.link_decoder(a.clone())?;
+    let _b_pad = mixer.link_decoder(b)?;
 
-    let mixer = gstreamer::ElementFactory::make("audiomixer", Some("mixer"))?;
+    a_pad.set_property("mute", &true)?;
 
-    let audiosink = gstreamer::ElementFactory::make("autoaudiosink", None)?;
+    let pipeline_th = pipeline;
+    let soundth = std::thread::spawn(move || pipeline_th.run().unwrap());
 
-    pipeline.add_many(&[&a_src, &a_decoder, &b_src, &b_decoder, &mixer, &audiosink])?;
-
-    a_src
-        .link(&a_decoder)
-        .with_context(|| "Failed to link A to decoder")?;
-
-    let a_mixer_pad = mixer
-        .request_pad(
-            &mixer
-                .get_pad_template("sink_%u")
-                .expect("Failed to get sink template for mixer"),
-            None,
-            None,
-        )
-        .expect("Failed to get a_mixer_pad");
-
-    // a_mixer_pad.set_property("mute", &true)?;
-
-    a_decoder.connect_pad_added(move |_, pad| {
-        pad.link(&a_mixer_pad).unwrap();
-    });
-
-    b_src
-        .link(&b_decoder)
-        .with_context(|| "Failed to link B to decoder")?;
-
-    let b_mixer_pad = mixer
-        .request_pad(
-            &mixer
-                .get_pad_template("sink_%u")
-                .expect("Failed to get sink template for mixer"),
-            None,
-            None,
-        )
-        .expect("Failed to get b_mixer_pad");
-
-    b_mixer_pad.set_property("mute", &true)?;
-
-    b_decoder.connect_pad_added(move |_, pad| {
-        pad.link(&b_mixer_pad).unwrap();
-    });
-
-    mixer
-        .link(&audiosink)
-        .with_context(|| "Failed to link mixer to audio sink")?;
-
-    pipeline.set_state(gstreamer::State::Playing)?;
-
-    let bus = pipeline.get_bus().expect("FIXME");
-    loop {
-        let message = bus.timed_pop(gstreamer::ClockTime::none());
-        if let Some(msg) = message {
-            use gstreamer::MessageView::*;
-            match msg.view() {
-                Eos(_) => {
-                    pipeline.set_state(gstreamer::State::Paused)?;
-                    break;
-                }
-                Error(e) => {
-                    eprintln!("{:?}", e);
-                }
-                Progress(p) => {
-                    println!("{:?}", p);
-                }
-                _ => continue,
-            }
-        }
+    while let Some(t) = a.src.query_duration::<ClockTime>() {
+        eprintln!("{}", t);
     }
+    soundth.join().unwrap();
     Ok(())
 }
