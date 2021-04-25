@@ -152,10 +152,10 @@ fn main() -> Result<(), Error> {
     gstreamer::init()?;
     let pipeline = AudioPipeline::new(Some("abx"));
 
+    let mixer = AudioMixer::new(&pipeline)?;
+
     let a = AudioDecoder::new(&pipeline, opt.a)?;
     let b = AudioDecoder::new(&pipeline, opt.b)?;
-
-    let mixer = AudioMixer::new(&pipeline)?;
 
     let a_pad = mixer.link_decoder(a.clone())?;
     let _b_pad = mixer.link_decoder(b)?;
