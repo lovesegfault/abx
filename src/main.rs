@@ -24,16 +24,16 @@ fn main() -> Result<(), Error> {
     let main = MainLoop::new(None, false);
     let ctx = main.get_context();
 
-    let mut pipeline = AudioSelector::new()?
+    let pipeline = AudioSelector::new()?
         .with_source(&opt.a)?
         .with_source(&opt.b)?
         .with_mainloop(&main)?
         .play()?;
 
     {
-        let main = main.clone();
+        let mut pipeline = pipeline.clone();
         ctx.invoke_with_priority(PRIORITY_HIGH, move || {
-            // enable_raw_mode().unwrap();
+            enable_raw_mode().unwrap();
             loop {
                 match read().unwrap() {
                     Event::Key(event) => {
@@ -47,6 +47,17 @@ fn main() -> Result<(), Error> {
                 }
             }
         });
+    }
+
+    {
+        let pipeline = pipeline.clone();
+        ctx.invoke(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let status = pipeline
+                .progress()
+                .expect("failed to get pipeline progress");
+            eprintln!(">>>> {}", status);
+        })
     }
 
     main.run();

@@ -1,6 +1,7 @@
 use std::{
     ops::Deref,
     path::{Path, PathBuf},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
 };
 
 use anyhow::{Context, Error};
@@ -74,19 +75,19 @@ impl AudioSource {
 #[derive(Clone)]
 pub struct AudioSelector {
     pipeline: Pipeline,
-    sources: Vec<AudioSource>,
-    selected: usize,
+    sources: Arc<Mutex<Vec<AudioSource>>>,
+    selected: Arc<AtomicUsize>,
 }
 
 impl AudioSelector {
     pub fn new() -> Result<Self, Error> {
         let pipeline = Pipeline::new(None);
-        let sources = Vec::new();
+        let sources = Arc::new(Mutex::new(Vec::new()));
 
         Ok(Self {
             pipeline,
             sources,
-            selected: 0,
+            selected: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -94,7 +95,10 @@ impl AudioSelector {
         let src = AudioSource::new(file, &self)?;
         src.mute()?;
 
-        self.sources.push(src);
+        self.sources
+            .lock()
+            .expect("sources lock is poisoned")
+            .push(src);
 
         Ok(self)
     }
@@ -129,7 +133,12 @@ impl AudioSelector {
         self.pipeline
             .set_state(State::Playing)
             .with_context(|| "failed to set AudioPipeline to Playing")?;
-        self.sources.get(0).map(|src| src.unmute()).transpose()?;
+        self.sources
+            .lock()
+            .expect("sources lock is poisoned")
+            .get(0)
+            .map(|src| src.unmute())
+            .transpose()?;
         Ok(self)
     }
 
@@ -144,34 +153,43 @@ impl AudioSelector {
             .with_context(|| "failed to set AudioPipeline to Null")
     }
 
+    pub fn progress(&self) -> Result<f64, Error> {
+        let duration: f64 = self
+            .pipeline
+            .query_duration::<ClockTime>()
+            .with_context(|| "failed to query pipeline duration")?
+            .deref()
+            .map(|d| d as f64)
+            .with_context(|| "no pipeline duration information available")?;
+        let position: f64 = self
+            .pipeline
+            .query_position::<ClockTime>()
+            .with_context(|| "failed to query pipeline position")?
+            .deref()
+            .map(|d| d as f64)
+            .with_context(|| "no pipeline position information available")?;
+        Ok((position / duration) * 100.0)
+    }
+
     pub fn select_source(&mut self, source: usize) -> Result<(), Error> {
-        self.sources
-            .get(self.selected)
+        let sources = self.sources.lock().expect("sources lock is poisoned");
+        sources
+            .get(self.selected.load(std::sync::atomic::Ordering::SeqCst))
             .map(|src| src.mute())
             .transpose()?;
-        self.sources
-            .get(source)
-            .map(|src| src.unmute())
-            .transpose()?;
+        sources.get(source).map(|src| src.unmute()).transpose()?;
 
-        self.selected = source;
-
-        let duration: Option<ClockTime> = self.pipeline.query_duration();
-        eprintln!("{:?}", duration);
-        let current: Option<ClockTime> = self.pipeline.query_position();
-        eprintln!("{:?}", current);
-        let percentage = duration.and_then(|d| *d.deref()).and_then(|d| {
-            current
-                .and_then(|c| *c.deref())
-                .map(|c| (c as f64 / d as f64) * 100.0)
-        });
-        eprintln!("{:?}", percentage);
+        self.selected
+            .store(source, std::sync::atomic::Ordering::SeqCst);
 
         Ok(())
     }
 
     pub fn next_source(&mut self) -> Result<(), Error> {
-        let idx = (self.selected + 1) & (self.sources.len() - 1);
+        let sources = self.sources.lock().expect("sources lock is poisoned");
+        let selected = self.selected.load(std::sync::atomic::Ordering::SeqCst);
+        let idx = (selected + 1) & (sources.len() - 1);
+        drop(sources);
         self.select_source(idx)?;
         Ok(())
     }
