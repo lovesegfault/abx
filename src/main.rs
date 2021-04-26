@@ -33,17 +33,13 @@ fn main() -> Result<(), Error> {
     {
         let main = main.clone();
         ctx.invoke_with_priority(PRIORITY_HIGH, move || {
-            enable_raw_mode().unwrap();
+            // enable_raw_mode().unwrap();
             loop {
                 match read().unwrap() {
                     Event::Key(event) => {
                         use KeyCode::*;
                         match event.code {
                             Char('n') => pipeline.next_source().unwrap(),
-                            Char('c') if event.modifiers == KeyModifiers::CONTROL => {
-                                main.quit();
-                                break;
-                            }
                             _ => eprintln!("{:?}", event),
                         }
                     }

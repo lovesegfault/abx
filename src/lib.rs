@@ -7,7 +7,7 @@ use gstreamer::{prelude::*, Element, ElementFactory, Pad, Pipeline, State};
 #[derive(Clone)]
 pub struct AudioSource {
     path: PathBuf,
-    pad: Pad,
+    volume: Element,
 }
 
 impl AudioSource {
@@ -19,6 +19,10 @@ impl AudioSource {
             .with_context(|| format!("failed to set filesrc location to {:?}", &path))?;
         let dec = ElementFactory::make("decodebin", None)
             .with_context(|| "failed to create decodebin")?;
+        let volume =
+            ElementFactory::make("volume", None).with_context(|| "failed to create volume")?;
+        let sink = ElementFactory::make("autoaudiosink", None)
+            .with_context(|| "failed to create autoaudiosink")?;
 
         selector
             .pipeline
@@ -30,40 +34,46 @@ impl AudioSource {
             .add(&dec)
             .with_context(|| "failed to add decodebin to pipeline")?;
 
+        selector
+            .pipeline
+            .add(&volume)
+            .with_context(|| "failed to add volume to pipeline")?;
+
+        selector
+            .pipeline
+            .add(&sink)
+            .with_context(|| "failed to add autoaudiosink to pipeline")?;
+
         src.link(&dec)
             .with_context(|| "failed to link filesrc and decodebin")?;
 
-        let pad = selector
-            .mixer
-            .request_pad(
-                &selector
-                    .mixer
-                    .get_pad_template("sink_%u")
-                    .expect("failed to get audiomixer pad template sink_%u"),
-                None,
-                None,
-            )
-            .with_context(|| "failed to get sink pad on audiomixer")?;
-
         {
-            let mixer_pad = pad.clone();
+            let volume_pad = volume
+                .get_sink_pads()
+                .get(0)
+                .with_context(|| "failed to get src pad for volume")?
+                .clone();
             dec.connect_pad_added(move |_, pad| {
-                pad.link(&mixer_pad)
-                    .expect("failed to link decodebin and audiomixer");
+                pad.link(&volume_pad)
+                    .expect("failed to link decodebin and volume");
             });
         }
 
-        Ok(AudioSource { path, pad })
+        volume
+            .link(&sink)
+            .with_context(|| "failed to link volume and autoaudiosink")?;
+
+        Ok(AudioSource { path, volume })
     }
 
     pub fn mute(&self) -> Result<(), Error> {
-        self.pad
+        self.volume
             .set_property("mute", &true)
             .with_context(|| "failed to mute AudioSource pad")
     }
 
     pub fn unmute(&self) -> Result<(), Error> {
-        self.pad
+        self.volume
             .set_property("mute", &false)
             .with_context(|| "failed to unmute AudioSource pad")
     }
@@ -72,7 +82,6 @@ impl AudioSource {
 #[derive(Clone)]
 pub struct AudioSelector {
     pipeline: Pipeline,
-    mixer: Element,
     sources: Vec<AudioSource>,
     selected: usize,
 }
@@ -80,26 +89,10 @@ pub struct AudioSelector {
 impl AudioSelector {
     pub fn new() -> Result<Self, Error> {
         let pipeline = Pipeline::new(None);
-        let mixer = ElementFactory::make("audiomixer", None)
-            .with_context(|| "failed to create audiomixer")?;
-        let sink = ElementFactory::make("autoaudiosink", None)
-            .with_context(|| "failed to create autoaudiosink")?;
         let sources = Vec::new();
-
-        pipeline
-            .add(&mixer)
-            .with_context(|| "failed to add audiomixer to pipeline")?;
-        pipeline
-            .add(&sink)
-            .with_context(|| "failed to add autoaudiosink to pipeline")?;
-
-        mixer
-            .link(&sink)
-            .with_context(|| "failed to link audiomixer and autoaudiosink")?;
 
         Ok(Self {
             pipeline,
-            mixer,
             sources,
             selected: 0,
         })
@@ -148,6 +141,17 @@ impl AudioSelector {
         Ok(self)
     }
 
+    pub fn stop(&self) -> Result<(), Error> {
+        self.pipeline
+            .set_state(State::Paused)
+            .map(|_| ())
+            .with_context(|| "failed to set AudioPipeline to Paused")?;
+        self.pipeline
+            .set_state(State::Null)
+            .map(|_| ())
+            .with_context(|| "failed to set AudioPipeline to Null")
+    }
+
     pub fn select_source(&mut self, source: usize) -> Result<(), Error> {
         self.sources
             .get(self.selected)
@@ -166,22 +170,5 @@ impl AudioSelector {
         let idx = (self.selected + 1) & (self.sources.len() - 1);
         self.select_source(idx)?;
         Ok(())
-    }
-}
-
-impl Drop for AudioSelector {
-    fn drop(&mut self) {
-        self.pipeline
-            .set_state(State::Null)
-            .map(|_| ())
-            .unwrap_or_else(|_| {
-                eprintln!("failed to set pipeline state to Null");
-            });
-        let bus = self
-            .pipeline
-            .get_bus()
-            .expect("failed to get bus for AudioPipeline");
-        bus.remove_watch()
-            .expect("failed to remove watch from AudioPipeline bus");
     }
 }
