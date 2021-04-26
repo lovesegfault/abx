@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::VecDeque,
     path::{Path, PathBuf},
 };
 
@@ -8,20 +8,73 @@ use glib::MainLoop;
 use gstreamer::{prelude::*, Element, ElementFactory, Pad, Pipeline, State};
 
 #[derive(Clone)]
-pub struct AudioPipeline {
-    pipeline: Pipeline,
-    mixer: Element,
-    sources: HashMap<PathBuf, Pad>,
+pub struct AudioSource {
+    path: PathBuf,
+    pad: Pad,
 }
 
-impl AudioPipeline {
+impl AudioSource {
+    pub fn new<P: AsRef<Path>>(path: P, selector: &AudioSelector) -> Result<Self, Error> {
+        let path = path.as_ref().to_owned();
+        let src =
+            ElementFactory::make("filesrc", None).with_context(|| "failed to create filesrc")?;
+        src.set_property("location", &path.to_str())
+            .with_context(|| format!("failed to set filesrc location to {:?}", &path))?;
+        let dec = ElementFactory::make("decodebin", None)
+            .with_context(|| "failed to create decodebin")?;
+
+        selector
+            .pipeline
+            .add(&src)
+            .with_context(|| "failed to add filesrc to pipeline")?;
+
+        selector
+            .pipeline
+            .add(&dec)
+            .with_context(|| "failed to add decodebin to pipeline")?;
+
+        src.link(&dec)
+            .with_context(|| "failed to link filesrc and decodebin")?;
+
+        let pad = selector
+            .mixer
+            .request_pad(
+                &selector
+                    .mixer
+                    .get_pad_template("sink_%u")
+                    .expect("failed to get audiomixer pad template sink_%u"),
+                None,
+                None,
+            )
+            .with_context(|| "failed to get sink pad on audiomixer")?;
+
+        {
+            let mixer_pad = pad.clone();
+            dec.connect_pad_added(move |_, pad| {
+                pad.link(&mixer_pad)
+                    .expect("failed to link decodebin and audiomixer");
+            });
+        }
+
+        Ok(AudioSource { path, pad })
+    }
+}
+
+#[derive(Clone)]
+pub struct AudioSelector {
+    pipeline: Pipeline,
+    mixer: Element,
+    sources: VecDeque<AudioSource>,
+}
+
+impl AudioSelector {
     pub fn new() -> Result<Self, Error> {
         let pipeline = Pipeline::new(None);
         let mixer = ElementFactory::make("audiomixer", None)
             .with_context(|| "failed to create audiomixer")?;
         let sink = ElementFactory::make("autoaudiosink", None)
             .with_context(|| "failed to create autoaudiosink")?;
-        let sources = HashMap::new();
+        let sources = VecDeque::new();
 
         pipeline
             .add(&mixer)
@@ -42,45 +95,9 @@ impl AudioPipeline {
     }
 
     pub fn with_source<P: AsRef<Path>>(mut self, file: P) -> Result<Self, Error> {
-        let src =
-            ElementFactory::make("filesrc", None).with_context(|| "failed to create filesrc")?;
-        src.set_property("location", &file.as_ref().to_str())
-            .with_context(|| format!("failed to set filesrc location to {:?}", file.as_ref()))?;
-        let dec = ElementFactory::make("decodebin", None)
-            .with_context(|| "failed to create decodebin")?;
+        let src = AudioSource::new(file, &self)?;
 
-        self.pipeline
-            .add(&src)
-            .with_context(|| "failed to add filesrc to pipeline")?;
-
-        self.pipeline
-            .add(&dec)
-            .with_context(|| "failed to add decodebin to pipeline")?;
-
-        src.link(&dec)
-            .with_context(|| "failed to link filesrc and decodebin")?;
-
-        let mixer_pad = self
-            .mixer
-            .request_pad(
-                &self
-                    .mixer
-                    .get_pad_template("sink_%u")
-                    .expect("failed to get audiomixer pad template sink_%u"),
-                None,
-                None,
-            )
-            .with_context(|| "failed to get sink pad on audiomixer")?;
-
-        {
-            let mixer_pad = mixer_pad.clone();
-            dec.connect_pad_added(move |_, pad| {
-                pad.link(&mixer_pad)
-                    .expect("failed to link decodebin and audiomixer");
-            });
-        }
-
-        self.sources.insert(file.as_ref().to_owned(), mixer_pad);
+        self.sources.push_back(src);
 
         Ok(self)
     }
@@ -127,7 +144,7 @@ impl AudioPipeline {
     }
 }
 
-impl Drop for AudioPipeline {
+impl Drop for AudioSelector {
     fn drop(&mut self) {
         self.pipeline
             .set_state(State::Null)

@@ -4,7 +4,7 @@ use anyhow::Error;
 use glib::MainLoop;
 use structopt::StructOpt;
 
-use abx::AudioPipeline;
+use abx::AudioSelector;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "abx", about = "CLI utility to ABX audio files.")]
@@ -20,7 +20,7 @@ fn main() -> Result<(), Error> {
 
     let main = MainLoop::new(None, false);
 
-    let _pipeline = AudioPipeline::new()?
+    let _pipeline = AudioSelector::new()?
         .with_source(&opt.a)?
         .with_source(&opt.b)?
         .with_mainloop(&main)?;
