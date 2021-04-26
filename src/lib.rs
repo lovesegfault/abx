@@ -1,14 +1,14 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    thread::{spawn, JoinHandle},
 };
 
-use anyhow::{anyhow, bail, Context, Error};
-use gstreamer::{prelude::*, ClockTime, Element, ElementFactory, Pad, Pipeline, State};
+use anyhow::{Context, Error};
+use glib::MainLoop;
+use gstreamer::{prelude::*, Element, ElementFactory, Pad, Pipeline, State};
 
 #[derive(Clone)]
-struct AudioPipeline {
+pub struct AudioPipeline {
     pipeline: Pipeline,
     mixer: Element,
     sources: HashMap<PathBuf, Pad>,
@@ -76,12 +76,38 @@ impl AudioPipeline {
             let mixer_pad = mixer_pad.clone();
             dec.connect_pad_added(move |_, pad| {
                 pad.link(&mixer_pad)
-                    .with_context(|| "failed to link decodebin and audiomixer")
-                    .unwrap();
+                    .expect("failed to link decodebin and audiomixer");
             });
         }
 
         self.sources.insert(file.as_ref().to_owned(), mixer_pad);
+
+        Ok(self)
+    }
+
+    pub fn with_mainloop(self, main: &MainLoop) -> Result<Self, Error> {
+        let bus = self
+            .pipeline
+            .get_bus()
+            .with_context(|| "failed to get bus for AudioPipeline")?;
+        self.play()?;
+
+        let main = main.clone();
+        bus.add_watch(move |_, msg| {
+            use gstreamer::MessageView::*;
+            match msg.view() {
+                Eos(_) => main.quit(),
+                Error(e) => {
+                    // FIXME
+                    eprintln!("{:?}", e);
+                    main.quit();
+                }
+                _ => (),
+            }
+
+            glib::Continue(true)
+        })
+        .with_context(|| "failed to add bus watch to pipeline")?;
 
         Ok(self)
     }
@@ -99,31 +125,21 @@ impl AudioPipeline {
             .with_context(|| "failed to set AudioPipeline to Playing")
             .map(|_| ())
     }
+}
 
-    pub fn run(&self) -> Result<JoinHandle<Result<(), Error>>, Error> {
-        let pipeline = self.clone();
-        let bus = pipeline
+impl Drop for AudioPipeline {
+    fn drop(&mut self) {
+        self.pipeline
+            .set_state(State::Null)
+            .map(|_| ())
+            .unwrap_or_else(|_| {
+                eprintln!("failed to set pipeline state to Null");
+            });
+        let bus = self
             .pipeline
             .get_bus()
-            .with_context(|| "failed to get bus for AudioPipeline")?;
-
-        let player = spawn(move || {
-            while let Some(msg) = bus.timed_pop(ClockTime::none()) {
-                use gstreamer::MessageView::*;
-                match msg.view() {
-                    Eos(_) => {
-                        pipeline.pause()?;
-                        break;
-                    }
-                    Error(e) => {
-                        pipeline.pause()?;
-                        bail!("received error while streaming: {:?}", e);
-                    }
-                    _ => continue,
-                }
-            }
-            Ok(())
-        });
-        Ok(player)
+            .expect("failed to get bus for AudioPipeline");
+        bus.remove_watch()
+            .expect("failed to remove watch from AudioPipeline bus");
     }
 }
