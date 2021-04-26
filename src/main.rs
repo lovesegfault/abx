@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use anyhow::Error;
-use glib::MainLoop;
+use crossterm::event::{read, Event, KeyCode};
+use crossterm::terminal::enable_raw_mode;
+use crossterm::{event::KeyModifiers, terminal::disable_raw_mode};
+use glib::{MainLoop, PRIORITY_HIGH};
 use structopt::StructOpt;
 
 use abx::AudioSelector;
@@ -19,14 +22,39 @@ fn main() -> Result<(), Error> {
     gstreamer::init()?;
 
     let main = MainLoop::new(None, false);
+    let ctx = main.get_context();
 
-    let _pipeline = AudioSelector::new()?
+    let mut pipeline = AudioSelector::new()?
         .with_source(&opt.a)?
         .with_source(&opt.b)?
         .with_mainloop(&main)?
         .play()?;
 
+    {
+        let main = main.clone();
+        ctx.invoke_with_priority(PRIORITY_HIGH, move || {
+            enable_raw_mode().unwrap();
+            loop {
+                match read().unwrap() {
+                    Event::Key(event) => {
+                        use KeyCode::*;
+                        match event.code {
+                            Char('n') => pipeline.next_source().unwrap(),
+                            Char('c') if event.modifiers == KeyModifiers::CONTROL => {
+                                main.quit();
+                                break;
+                            }
+                            _ => eprintln!("{:?}", event),
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+        });
+    }
+
     main.run();
 
+    disable_raw_mode().unwrap();
     Ok(())
 }

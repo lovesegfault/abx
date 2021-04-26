@@ -1,6 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Error};
 use glib::MainLoop;
@@ -103,7 +101,7 @@ impl AudioSelector {
             pipeline,
             mixer,
             sources,
-            selected: 0
+            selected: 0,
         })
     }
 
@@ -111,7 +109,7 @@ impl AudioSelector {
         let src = AudioSource::new(file, &self)?;
         src.mute()?;
 
-        self.sources.push_back(src);
+        self.sources.push(src);
 
         Ok(self)
     }
@@ -150,8 +148,24 @@ impl AudioSelector {
         Ok(self)
     }
 
-    pub fn select_source(&self, source: usize) {
-        self.sources.
+    pub fn select_source(&mut self, source: usize) -> Result<(), Error> {
+        self.sources
+            .get(self.selected)
+            .map(|src| src.mute())
+            .transpose()?;
+        self.sources
+            .get(source)
+            .map(|src| src.unmute())
+            .transpose()?;
+
+        self.selected = source;
+        Ok(())
+    }
+
+    pub fn next_source(&mut self) -> Result<(), Error> {
+        let idx = (self.selected + 1) & (self.sources.len() - 1);
+        self.select_source(idx)?;
+        Ok(())
     }
 }
 
