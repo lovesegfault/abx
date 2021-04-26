@@ -23,7 +23,8 @@ fn main() -> Result<(), Error> {
     let _pipeline = AudioSelector::new()?
         .with_source(&opt.a)?
         .with_source(&opt.b)?
-        .with_mainloop(&main)?;
+        .with_mainloop(&main)?
+        .play()?;
 
     main.run();
 

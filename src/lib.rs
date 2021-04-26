@@ -58,6 +58,18 @@ impl AudioSource {
 
         Ok(AudioSource { path, pad })
     }
+
+    pub fn mute(&self) -> Result<(), Error> {
+        self.pad
+            .set_property("mute", &true)
+            .with_context(|| "failed to mute AudioSource pad")
+    }
+
+    pub fn unmute(&self) -> Result<(), Error> {
+        self.pad
+            .set_property("mute", &false)
+            .with_context(|| "failed to unmute AudioSource pad")
+    }
 }
 
 #[derive(Clone)]
@@ -96,9 +108,18 @@ impl AudioSelector {
 
     pub fn with_source<P: AsRef<Path>>(mut self, file: P) -> Result<Self, Error> {
         let src = AudioSource::new(file, &self)?;
+        src.mute()?;
 
         self.sources.push_back(src);
 
+        Ok(self)
+    }
+
+    pub fn play(self) -> Result<Self, Error> {
+        self.pipeline
+            .set_state(State::Playing)
+            .with_context(|| "failed to set AudioPipeline to Playing")?;
+        self.sources.get(0).map(|src| src.unmute()).transpose()?;
         Ok(self)
     }
 
@@ -107,7 +128,6 @@ impl AudioSelector {
             .pipeline
             .get_bus()
             .with_context(|| "failed to get bus for AudioPipeline")?;
-        self.play()?;
 
         let main = main.clone();
         bus.add_watch(move |_, msg| {
@@ -127,20 +147,6 @@ impl AudioSelector {
         .with_context(|| "failed to add bus watch to pipeline")?;
 
         Ok(self)
-    }
-
-    pub fn play(&self) -> Result<(), Error> {
-        self.pipeline
-            .set_state(State::Playing)
-            .with_context(|| "failed to set AudioPipeline to Playing")
-            .map(|_| ())
-    }
-
-    pub fn pause(&self) -> Result<(), Error> {
-        self.pipeline
-            .set_state(State::Paused)
-            .with_context(|| "failed to set AudioPipeline to Playing")
-            .map(|_| ())
     }
 }
 
