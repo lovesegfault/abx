@@ -1,13 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ops::Deref,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Error};
 use glib::MainLoop;
-use gstreamer::{prelude::*, Element, ElementFactory, Pad, Pipeline, State};
+use gstreamer::{prelude::*, ClockTime, Element, ElementFactory, Pipeline, State};
 
 #[derive(Clone)]
 pub struct AudioSource {
     path: PathBuf,
-    volume: Element,
+    sink: Element,
 }
 
 impl AudioSource {
@@ -19,10 +22,8 @@ impl AudioSource {
             .with_context(|| format!("failed to set filesrc location to {:?}", &path))?;
         let dec = ElementFactory::make("decodebin", None)
             .with_context(|| "failed to create decodebin")?;
-        let volume =
-            ElementFactory::make("volume", None).with_context(|| "failed to create volume")?;
-        let sink = ElementFactory::make("autoaudiosink", None)
-            .with_context(|| "failed to create autoaudiosink")?;
+        let sink = ElementFactory::make("pulsesink", None)
+            .with_context(|| "failed to create pulsesink")?;
 
         selector
             .pipeline
@@ -36,11 +37,6 @@ impl AudioSource {
 
         selector
             .pipeline
-            .add(&volume)
-            .with_context(|| "failed to add volume to pipeline")?;
-
-        selector
-            .pipeline
             .add(&sink)
             .with_context(|| "failed to add autoaudiosink to pipeline")?;
 
@@ -48,32 +44,28 @@ impl AudioSource {
             .with_context(|| "failed to link filesrc and decodebin")?;
 
         {
-            let volume_pad = volume
+            let sink_pad = sink
                 .get_sink_pads()
                 .get(0)
-                .with_context(|| "failed to get src pad for volume")?
+                .with_context(|| "failed to get sink pad for pulsesink")?
                 .clone();
             dec.connect_pad_added(move |_, pad| {
-                pad.link(&volume_pad)
-                    .expect("failed to link decodebin and volume");
+                pad.link(&sink_pad)
+                    .expect("failed to link decodebin and pulsesink");
             });
         }
 
-        volume
-            .link(&sink)
-            .with_context(|| "failed to link volume and autoaudiosink")?;
-
-        Ok(AudioSource { path, volume })
+        Ok(AudioSource { path, sink })
     }
 
     pub fn mute(&self) -> Result<(), Error> {
-        self.volume
+        self.sink
             .set_property("mute", &true)
             .with_context(|| "failed to mute AudioSource pad")
     }
 
     pub fn unmute(&self) -> Result<(), Error> {
-        self.volume
+        self.sink
             .set_property("mute", &false)
             .with_context(|| "failed to unmute AudioSource pad")
     }
@@ -163,6 +155,18 @@ impl AudioSelector {
             .transpose()?;
 
         self.selected = source;
+
+        let duration: Option<ClockTime> = self.pipeline.query_duration();
+        eprintln!("{:?}", duration);
+        let current: Option<ClockTime> = self.pipeline.query_position();
+        eprintln!("{:?}", current);
+        let percentage = duration.and_then(|d| *d.deref()).and_then(|d| {
+            current
+                .and_then(|c| *c.deref())
+                .map(|c| (c as f64 / d as f64) * 100.0)
+        });
+        eprintln!("{:?}", percentage);
+
         Ok(())
     }
 
