@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     path::{Path, PathBuf},
 };
 
@@ -76,7 +75,8 @@ impl AudioSource {
 pub struct AudioSelector {
     pipeline: Pipeline,
     mixer: Element,
-    sources: VecDeque<AudioSource>,
+    sources: Vec<AudioSource>,
+    selected: usize,
 }
 
 impl AudioSelector {
@@ -86,7 +86,7 @@ impl AudioSelector {
             .with_context(|| "failed to create audiomixer")?;
         let sink = ElementFactory::make("autoaudiosink", None)
             .with_context(|| "failed to create autoaudiosink")?;
-        let sources = VecDeque::new();
+        let sources = Vec::new();
 
         pipeline
             .add(&mixer)
@@ -103,6 +103,7 @@ impl AudioSelector {
             pipeline,
             mixer,
             sources,
+            selected: 0
         })
     }
 
@@ -112,14 +113,6 @@ impl AudioSelector {
 
         self.sources.push_back(src);
 
-        Ok(self)
-    }
-
-    pub fn play(self) -> Result<Self, Error> {
-        self.pipeline
-            .set_state(State::Playing)
-            .with_context(|| "failed to set AudioPipeline to Playing")?;
-        self.sources.get(0).map(|src| src.unmute()).transpose()?;
         Ok(self)
     }
 
@@ -147,6 +140,18 @@ impl AudioSelector {
         .with_context(|| "failed to add bus watch to pipeline")?;
 
         Ok(self)
+    }
+
+    pub fn play(self) -> Result<Self, Error> {
+        self.pipeline
+            .set_state(State::Playing)
+            .with_context(|| "failed to set AudioPipeline to Playing")?;
+        self.sources.get(0).map(|src| src.unmute()).transpose()?;
+        Ok(self)
+    }
+
+    pub fn select_source(&self, source: usize) {
+        self.sources.
     }
 }
 
