@@ -31,6 +31,7 @@ fn main() -> Result<(), Error> {
         .play()?;
 
     {
+        let main = main.clone();
         let mut pipeline = pipeline.clone();
         ctx.invoke_with_priority(PRIORITY_HIGH, move || {
             enable_raw_mode().unwrap();
@@ -40,6 +41,10 @@ fn main() -> Result<(), Error> {
                         use KeyCode::*;
                         match event.code {
                             Char('n') => pipeline.next_source().unwrap(),
+                            Char('c') if event.modifiers == KeyModifiers::CONTROL => {
+                                disable_raw_mode().unwrap();
+                                main.quit();
+                            }
                             _ => eprintln!("{:?}", event),
                         }
                     }
@@ -52,7 +57,7 @@ fn main() -> Result<(), Error> {
     {
         let pipeline = pipeline.clone();
         ctx.invoke(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            eprintln!("foob");
             let status = pipeline
                 .progress()
                 .expect("failed to get pipeline progress");
@@ -62,6 +67,5 @@ fn main() -> Result<(), Error> {
 
     main.run();
 
-    disable_raw_mode().unwrap();
     Ok(())
 }
