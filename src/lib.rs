@@ -1,16 +1,18 @@
+pub mod events;
+
 use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc, Mutex},
+    thread::JoinHandle,
 };
 
 use anyhow::{Context, Error};
-use glib::MainLoop;
 use gstreamer::{prelude::*, ClockTime, Element, ElementFactory, Pipeline, State};
 
 #[derive(Clone)]
 pub struct AudioSource {
-    path: PathBuf,
+    pub path: PathBuf,
     sink: Element,
 }
 
@@ -75,8 +77,9 @@ impl AudioSource {
 #[derive(Clone)]
 pub struct AudioSelector {
     pipeline: Pipeline,
-    sources: Arc<Mutex<Vec<AudioSource>>>,
-    selected: Arc<AtomicUsize>,
+    runner: Option<Arc<JoinHandle<Result<(), Error>>>>,
+    pub sources: Arc<Mutex<Vec<AudioSource>>>,
+    pub selected: Arc<AtomicUsize>,
 }
 
 impl AudioSelector {
@@ -86,12 +89,13 @@ impl AudioSelector {
 
         Ok(Self {
             pipeline,
+            runner: None,
             sources,
             selected: Arc::new(AtomicUsize::new(0)),
         })
     }
 
-    pub fn with_source<P: AsRef<Path>>(mut self, file: P) -> Result<Self, Error> {
+    pub fn with_source<P: AsRef<Path>>(self, file: P) -> Result<Self, Error> {
         let src = AudioSource::new(file, &self)?;
         src.mute()?;
 
@@ -103,33 +107,41 @@ impl AudioSelector {
         Ok(self)
     }
 
-    pub fn with_mainloop(self, main: &MainLoop) -> Result<Self, Error> {
-        let bus = self
-            .pipeline
-            .get_bus()
-            .with_context(|| "failed to get bus for AudioPipeline")?;
+    pub fn run(mut self) -> Result<Self, Error> {
+        let pipeline = self.pipeline.clone();
+        let runner = std::thread::spawn(move || {
+            let bus = pipeline
+                .get_bus()
+                .with_context(|| "failed to get bus for AudioPipeline")?;
 
-        let main = main.clone();
-        bus.add_watch(move |_, msg| {
             use gstreamer::MessageView::*;
-            match msg.view() {
-                Eos(_) => main.quit(),
-                Error(e) => {
-                    // FIXME
-                    eprintln!("{:?}", e);
-                    main.quit();
+            while let Some(msg) = bus.pop() {
+                match msg.view() {
+                    Eos(_) => {
+                        pipeline
+                            .set_state(State::Null)
+                            .map(|_| ())
+                            .with_context(|| "failed to set AudioPipeline to Null")?;
+                        break;
+                    }
+                    Error(e) => {
+                        // FIXME
+                        eprintln!("{:?}", e);
+                        pipeline
+                            .set_state(State::Null)
+                            .map(|_| ())
+                            .with_context(|| "failed to set AudioPipeline to Null")?;
+                        break;
+                    }
+                    _ => (),
                 }
-                _ => (),
             }
 
-            glib::Continue(true)
-        })
-        .with_context(|| "failed to add bus watch to pipeline")?;
+            Ok(())
+        });
 
-        Ok(self)
-    }
+        self.runner = Some(Arc::new(runner));
 
-    pub fn play(self) -> Result<Self, Error> {
         self.pipeline
             .set_state(State::Playing)
             .with_context(|| "failed to set AudioPipeline to Playing")?;
@@ -139,6 +151,7 @@ impl AudioSelector {
             .get(0)
             .map(|src| src.unmute())
             .transpose()?;
+
         Ok(self)
     }
 
