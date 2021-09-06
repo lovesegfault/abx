@@ -29,7 +29,9 @@
         }).buildRustPackage;
       in
       {
-        defaultPackage = buildRustPackage {
+        defaultPackage = self.packages.${system}.abx;
+
+        packages.abx = buildRustPackage {
           pname = "abx";
           version = "0.1.0";
 
@@ -49,12 +51,14 @@
           ];
         };
 
-        devShell = self.defaultPackage.${system}.overrideAttrs (oldAttrs: {
-          buildInputs = with pkgs; (oldAttrs.buildInputs or [ ]) ++ [
+        devShell = pkgs.mkShell {
+          name = "abx";
+          nativeBuildInputs = with pkgs; (self.packages.${system}.abx.nativeBuildInputs) ++ [ ];
+          buildInputs = with pkgs; (self.packages.${system}.abx.buildInputs) ++ [
             fenixPkgs.rust-analyzer
             cargo-edit
             nixpkgs-fmt
           ];
-        });
+        };
       });
 }
