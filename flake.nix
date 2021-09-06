@@ -55,8 +55,9 @@
           name = "abx";
           nativeBuildInputs = with pkgs; (self.packages.${system}.abx.nativeBuildInputs) ++ [ ];
           buildInputs = with pkgs; (self.packages.${system}.abx.buildInputs) ++ [
-            fenixPkgs.rust-analyzer
             cargo-edit
+            cargo-udeps
+            fenixPkgs.rust-analyzer
             nixpkgs-fmt
           ];
         };
