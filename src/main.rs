@@ -92,6 +92,9 @@ fn main() -> Result<(), Error> {
                         pipeline.selected.load(std::sync::atomic::Ordering::SeqCst),
                     ));
                 }
+                Key::Char('p') => {
+                    pipeline.toggle().unwrap();
+                }
                 _ => (),
             },
             Event::Tick => (),
