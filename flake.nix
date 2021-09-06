@@ -4,21 +4,17 @@
     fenix = {
       url = "github:figsoda/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.naersk.follows = "naersk";
-    };
-    naersk = {
-      url = "github:nmattia/naersk";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, fenix, flake-utils, naersk, nixpkgs }:
+  outputs = { self, fenix, flake-utils, nixpkgs }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
         fenixPkgs = fenix.packages.${system};
-        fenixComplete = fenixPkgs.complete.withComponents [
+        rustFull = fenixPkgs.complete.withComponents [
           "cargo"
           "clippy-preview"
           "rust-src"
@@ -26,17 +22,24 @@
           "rustc"
           "rustfmt-preview"
         ];
-        naerskBuild = (naersk.lib.${system}.override {
-          cargo = fenixComplete;
-          rustc = fenixComplete;
-        }).buildPackage;
+
+        buildRustPackage = (pkgs.makeRustPlatform {
+          cargo = rustFull;
+          rustc = rustFull;
+        }).buildRustPackage;
       in
       {
-        defaultPackage = naerskBuild {
+        defaultPackage = buildRustPackage {
+          pname = "abx";
+          version = "0.1.0";
+
           src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+
           nativeBuildInputs = with pkgs; [
             pkg-config
           ];
+
           buildInputs = with pkgs; [
             gst_all_1.gstreamer
             gst_all_1.gst-plugins-base

@@ -48,7 +48,7 @@ impl AudioSource {
 
         {
             let sink_pad = sink
-                .get_sink_pads()
+                .sink_pads()
                 .get(0)
                 .with_context(|| "failed to get sink pad for pulsesink")?
                 .clone();
@@ -111,7 +111,7 @@ impl AudioSelector {
         let pipeline = self.pipeline.clone();
         let runner = std::thread::spawn(move || {
             let bus = pipeline
-                .get_bus()
+                .bus()
                 .with_context(|| "failed to get bus for AudioPipeline")?;
 
             use gstreamer::MessageView::*;
@@ -167,20 +167,16 @@ impl AudioSelector {
     }
 
     pub fn progress(&self) -> Result<f64, Error> {
-        let duration: f64 = self
+        let duration: f64 = *self
             .pipeline
             .query_duration::<ClockTime>()
             .with_context(|| "failed to query pipeline duration")?
-            .deref()
-            .map(|d| d as f64)
-            .with_context(|| "no pipeline duration information available")?;
-        let position: f64 = self
+            .deref() as f64;
+        let position: f64 = *self
             .pipeline
             .query_position::<ClockTime>()
             .with_context(|| "failed to query pipeline position")?
-            .deref()
-            .map(|d| d as f64)
-            .with_context(|| "no pipeline position information available")?;
+            .deref() as f64;
         Ok((position / duration) * 100.0)
     }
 
