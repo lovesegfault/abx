@@ -155,15 +155,32 @@ impl AudioSelector {
         Ok(self)
     }
 
-    pub fn stop(&self) -> Result<(), Error> {
+    pub fn play(&self) -> Result<(), Error> {
+        self.pipeline
+            .set_state(State::Playing)
+            .map(|_| ())
+            .with_context(|| "failed to set AudioPipeline to Playing")
+    }
+
+    pub fn pause(&self) -> Result<(), Error> {
         self.pipeline
             .set_state(State::Paused)
             .map(|_| ())
-            .with_context(|| "failed to set AudioPipeline to Paused")?;
-        self.pipeline
-            .set_state(State::Null)
-            .map(|_| ())
-            .with_context(|| "failed to set AudioPipeline to Null")
+            .with_context(|| "failed to set AudioPipeline to Paused")
+    }
+
+    pub fn toggle(&self) -> Result<(), Error> {
+        match self.pipeline.current_state() {
+            State::Playing => {
+                self.pause()
+            }
+            State::Paused => {
+                self.play()
+            }
+            _ => {
+                Ok(())
+            }
+        }
     }
 
     pub fn progress(&self) -> Result<f64, Error> {
