@@ -18,10 +18,10 @@ pub enum Event<I> {
 /// A small event handler that wrap termion input and tick events. Each event
 /// type is handled in its own thread and returned to a common `Receiver`
 pub struct Events {
-    rx: mpsc::Receiver<Event<Key>>,
-    input_handle: thread::JoinHandle<()>,
     ignore_exit_key: Arc<AtomicBool>,
-    tick_handle: thread::JoinHandle<()>,
+    rx: mpsc::Receiver<Event<Key>>,
+    _input_handle: thread::JoinHandle<()>,
+    _tick_handle: thread::JoinHandle<()>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,8 +74,8 @@ impl Events {
         Events {
             rx,
             ignore_exit_key,
-            input_handle,
-            tick_handle,
+            _input_handle: input_handle,
+            _tick_handle: tick_handle,
         }
     }
 
