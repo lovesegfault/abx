@@ -91,3 +91,9 @@ impl Events {
         self.ignore_exit_key.store(false, Ordering::Relaxed);
     }
 }
+
+impl Default for Events {
+    fn default() -> Self {
+        Self::new()
+    }
+}
