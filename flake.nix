@@ -53,13 +53,13 @@
 
         devShell = pkgs.mkShell {
           name = "abx";
-          nativeBuildInputs = with pkgs; (self.packages.${system}.abx.nativeBuildInputs) ++ [ ];
-          buildInputs = with pkgs; (self.packages.${system}.abx.buildInputs) ++ [
+          nativeBuildInputs = with pkgs; (self.packages.${system}.abx.nativeBuildInputs) ++ [
             cargo-edit
             cargo-udeps
             fenixPkgs.rust-analyzer
             nixpkgs-fmt
           ];
+          buildInputs = with pkgs; (self.packages.${system}.abx.buildInputs) ++ [ ];
         };
       });
 }
