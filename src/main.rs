@@ -41,6 +41,7 @@ fn main() -> Result<(), Error> {
         .with_source(&opt.b)?
         .run()?;
     let mut state = ListState::default();
+    let mut revealed = false;
     state.select(Some(0));
     loop {
         terminal
@@ -67,7 +68,12 @@ fn main() -> Result<(), Error> {
                     .expect("poisoned source lock")
                     .iter()
                     .map(|s| s.path.to_string_lossy().as_ref().to_owned())
-                    .map(|n| ListItem::new(n))
+                    .zip('A'..='Z')
+                    .map(|(p, c)| match revealed {
+                        true => p,
+                        false => c.to_string(),
+                    })
+                    .map(ListItem::new)
                     .collect::<Vec<_>>();
                 let list = List::new(list_of_songs)
                     .block(Block::default().title("Songs").borders(Borders::ALL))
@@ -94,6 +100,9 @@ fn main() -> Result<(), Error> {
                 }
                 Key::Char('p') => {
                     pipeline.toggle().unwrap();
+                }
+                Key::Char('r') => {
+                    revealed = !revealed;
                 }
                 _ => (),
             },
